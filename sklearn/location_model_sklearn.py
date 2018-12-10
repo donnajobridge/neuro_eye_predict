@@ -83,7 +83,7 @@ class Decoder(object):
                     auc_z, fake_aucs = run_perm_test(df, kf, real_auc, self.nperms, self.label_key, self.nfold)
                     p = 1-((np.sum(real_auc>fake_aucs[0])+1)/(fake_aucs.shape[0]+1))
 
-                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'times'], 'endtime':self.times.loc[t[-1], 'times'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms}
+                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms}
                     scorelist.append(scoredict)
                     print(f,t,scorelist)
         if permute_flag:
@@ -91,7 +91,6 @@ class Decoder(object):
             scoredf.to_csv(self.data_path+self.sub+self.cond1+self.cond2+'scores.csv')
 
         pred_df.to_csv(self.data_path+self.sub+self.cond1+self.cond2+'predictions.csv')
-        return pred_df
 
 
     def gen_long(self):

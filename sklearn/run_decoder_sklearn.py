@@ -16,8 +16,8 @@ for subject in ['ec109']:
         decoder = Decoder(sub = subject,
                                 cond1 = cond_pair['cond1'],
                                 cond2 = cond_pair['cond2'],
-                                data_path='/Users/drdj/locdec/data/',
+                                data_path='/Users/drdj/neuro_eye_predict/data/',
                                 freq_range = [(3,8), (8,15), (15,25), (25,60), (60,101)],
                                 time_range = [(-750,-500), (-500,-250), (-250,0), (0,250), (250,500), (500,750)])
 
-        pred_df = decoder.perform_cv()
+        decoder.perform_cv()
