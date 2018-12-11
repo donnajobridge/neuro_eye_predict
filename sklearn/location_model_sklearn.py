@@ -31,13 +31,12 @@ class Decoder(object):
         self.cond1=cond1
         self.cond2=cond2
         self.data_path=data_path
-        self.data_files = [f'{self.data_path}{self.cond1}_{sub}.csv',
-                           f'{self.data_path}{self.cond2}_{sub}.csv']
-        self.long_csv = f'{self.data_path}{self.sub}_{self.cond1}_{self.cond2}_long.csv'
+        self.data_files = [f'{self.data_path}{self.cond1}_behav_{sub}.csv',
+                           f'{self.data_path}{self.cond2}_behav_{sub}.csv']
+        # self.long_csv = f'{self.data_path}{self.sub}_{self.cond1}_{self.cond2}_long.csv'
 
         # check if the df exists, if not create it
-        if not os.path.isfile(self.long_csv):
-            self.gen_long()
+        # self.gen_long()
         # parameters for cross-validation
 
         self.nfold = 5
@@ -54,7 +53,7 @@ class Decoder(object):
 
     def perform_cv(self, permute_flag=True):
         kf = KFold(n_splits=self.nfold, shuffle=True)
-        df_long = pd.read_csv(self.long_csv)
+        df_long = self.gen_long()
         scorelist = []
         pred_df = pd.DataFrame()
 
@@ -88,9 +87,9 @@ class Decoder(object):
                     print(f,t,scorelist)
         if permute_flag:
             scoredf = pd.DataFrame(scorelist)
-            scoredf.to_csv(self.data_path+self.sub+self.cond1+self.cond2+'scores.csv')
+            scoredf.to_csv(self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+'scores.csv')
 
-        pred_df.to_csv(self.data_path+self.sub+self.cond1+self.cond2+'predictions.csv')
+        pred_df.to_csv(self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+'predictions.csv')
 
 
     def gen_long(self):
@@ -109,7 +108,8 @@ class Decoder(object):
             df = pd.concat([df, df_tmp], axis=0)
 
         df.reset_index(drop=True, inplace=True)
-        df.to_csv(self.long_csv, index=False)
+        return df
+        # df.to_csv(self.long_csv, index=False)
 
 
 def gen_wide_df(df, f_idx, t_idx):
@@ -120,6 +120,9 @@ def gen_wide_df(df, f_idx, t_idx):
     :param t_idx:
     :return:
     """
+    cols_to_drop = ['response', 'view1', 'view2', 'view3']
+    df.drop(cols_to_drop, axis=1, inplace=True)
+
     df = df.loc[(df['time'].isin(t_idx)) & (df['freqs'].isin(f_idx))]
 
     # z-score within block
