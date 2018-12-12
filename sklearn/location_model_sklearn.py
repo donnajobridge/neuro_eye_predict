@@ -187,8 +187,8 @@ def zscore(x):
 
 def initialize_logreg(X_train, y_train, nfolds):
     ''' sets up model to run cross-validation logistic regression '''
-    C_grid = np.logspace(-15,-1,10)
-    logregcv = LogisticRegressionCV(Cs=C_grid, cv=nfolds, max_iter=1000,
+    C_grid = np.logspace(-50,-10,10)
+    logregcv = LogisticRegressionCV(Cs=C_grid, cv=nfolds, max_iter=100,
                                     scoring ='roc_auc',class_weight = 'balanced', n_jobs=-1,penalty='l2', solver='lbfgs')
     logregcv.fit(X_train, y_train)
     return logregcv
@@ -213,7 +213,7 @@ def run_perm_test(df, kf, real_auc, nperms, label_key, nfolds):
             else:
                 all_preds = pd.concat([all_preds, predict_fold])
         fake_aucs.loc[i,0] = roc_auc_score(all_preds['labels'],all_preds[1])
-
+        print(f'finishing perm {i}')
     auc_z = (real_auc - fake_aucs.mean())/fake_aucs.std()
     return auc_z, fake_aucs
 
