@@ -34,16 +34,30 @@ class Decoder(object):
                  freq_range=None,
                  time_range=None,
                  freqs = pd.DataFrame(np.logspace(np.log10(3),np.log10(100),num=50), index=np.arange(1,51), columns=['freqs']),
-                 times = pd.DataFrame(np.arange(-750,751,step=2),index=np.arange(1,752), columns=['time'])):
+                 times = pd.DataFrame(np.arange(-750,751,step=2),index=np.arange(1,752), columns=['time']),
+                 keep_pow=True,
+                 keep_phase=True):
         self.sub = sub
         self.cond1=cond1
         self.cond2=cond2
         self.data_path=data_path
         self.data_files = [f'{self.data_path}{self.cond1}_behav_{sub}.csv',
                            f'{self.data_path}{self.cond2}_behav_{sub}.csv']
-        self.predcv = self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+'predictions.csv'
 
-        self.scores=self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+'scores.csv'
+        # specify features to use
+        self.keep_pow=keep_pow
+        self.keep_phase=keep_phase
+
+        if self.keep_pow and self.keep_phase:
+            self.features = 'all'
+        elif self.keep_pow and not self.keep_phase:
+            self.features = 'pow'
+        elif not self.keep_pow and self.keep_phase:
+            self.features= 'phase'
+
+        self.predcv = self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+self.features+'_predictions.csv'
+
+        self.scores=self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+ self.features+'_scores.csv'
         # parameters for cross-validation
 
         self.nfold = 5
@@ -55,6 +69,7 @@ class Decoder(object):
         self.freq_inds = [freqs[(freqs['freqs'] >= freq_range[count][0]) & (freqs['freqs'] <= freq_range[count][1])].index.values for count in range(len(freq_range))]
         self.times=times
         self.time_inds = [times[(times['time'] >= time_range[count][0]) & (times['time'] <= time_range[count][1])].index.values for count in range(len(time_range))]
+
 
 
     def perform_cv(self, permute_flag=True):
@@ -72,8 +87,7 @@ class Decoder(object):
                 scorelist = []
                 cond_df = pd.DataFrame()
 
-                df, elecs, freqs, time, ncol = gen_wide_df(df_long, f, t)
-
+                df, elecs, freqs, time, ncol = gen_wide_df(df_long, f, t, self.keep_pow, self.keep_phase)
                 # iterate over folds
                 for train_ind, test_ind in kf.split(df):
 
@@ -132,7 +146,7 @@ class Decoder(object):
         return df
 
 
-def gen_wide_df(df, f_idx, t_idx):
+def gen_wide_df(df, f_idx, t_idx, keep_pow, keep_phase):
     """
 
     :param df:
@@ -145,9 +159,12 @@ def gen_wide_df(df, f_idx, t_idx):
 
     # z-score within block
     gb = df.groupby(['elecs', 'freqs', 'blockno'])
-    df['zpow'] = gb['pow'].apply(zscore)
-    df['sin'] = gb['phase'].apply(np.sin)
-    df['cos'] = gb['phase'].apply(np.cos)
+    if keep_pow:
+        df['zpow'] = gb['pow'].apply(zscore)
+    if keep_phase:
+        df['sin'] = gb['phase'].apply(np.sin)
+        df['cos'] = gb['phase'].apply(np.cos)
+
     df.drop(['pow', 'phase'], inplace=True, axis=1)
 
     df = pd.pivot_table(df,
