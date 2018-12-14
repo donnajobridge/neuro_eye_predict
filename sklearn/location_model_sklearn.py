@@ -51,7 +51,7 @@ class Decoder(object):
         self.dsrate = dsrate
 
         if self.keep_pow and self.keep_phase:
-            self.features = 'all'
+            self.features = 'pow+phase'
         elif self.keep_pow and not self.keep_phase:
             self.features = 'pow'
         elif not self.keep_pow and self.keep_phase:
@@ -178,7 +178,7 @@ def downsample_df(df, dsrate):
     return newdf
 
 
-def gen_wide_df(df, dsrate, f_idx, t_idx):
+def gen_wide_df(df, f_idx, t_idx):
     """
 
     :param df:

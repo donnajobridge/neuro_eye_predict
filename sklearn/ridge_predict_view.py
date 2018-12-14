@@ -48,15 +48,15 @@ class ridge(object):
         self.keep_phase=keep_phase
         self.dsrate=dsrate
         if self.keep_pow and self.keep_phase:
-            self.features = 'all'
+            self.features = 'pow+phase'
         elif self.keep_pow and not self.keep_phase:
             self.features = 'pow'
         elif not self.keep_pow and self.keep_phase:
             self.features= 'phase'
 
-        self.predcv = self.data_path+self.sub+'_'+self.cond+'_'+self.label_key+'_'+self.features+'_predictions.csv'
+        self.predcv = self.data_path+self.sub+'_'+self.cond+'_'+self.label_key+'_'+self.features'ridge_predictions.csv'
 
-        self.scores=self.data_path+self.sub+'_'+self.cond+'_'+self.label_key+'_'+ self.features+'_scores.csv'
+        self.scores=self.data_path+self.sub+'_'+self.cond+'_'+self.label_key+'_'+ self.features+'ridge_scores.csv'
         # parameters for cross-validation
 
         self.nperms = 10
@@ -66,7 +66,6 @@ class ridge(object):
         self.freq_inds = [freqs[(freqs['freqs'] >= freq_range[count][0]) & (freqs['freqs'] <= freq_range[count][1])].index.values for count in range(len(freq_range))]
         self.times=times
         self.time_inds = [times[(times['time'] >= time_range[count][0]) & (times['time'] <= time_range[count][1])].index.values for count in range(len(time_range))]
-
 
 
     def perform_ridgecv(self, permute_flag=True):
@@ -96,8 +95,7 @@ class ridge(object):
                 # dictionary of values with probabilities from ridgecv
                 probsdict = {'preds':ridgecv.predict(X_test), 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'features':self.features, 'dsrate':self.dsrate}
 
-                fold_df = pd.DataFrame(probsdict)
-                cond_df = pd.concat([cond_df, fold_df])
+                cond_df = pd.DataFrame(probsdict)
 
                 if os.path.isfile(self.predcv):
                     cond_df.to_csv(self.predcv, mode='a', header=False)
@@ -108,11 +106,11 @@ class ridge(object):
 
                 # permute class labels and run model to find a null distribution of auc values
                 if permute_flag:
-                    auc_z, fake_aucs = run_perm_test(df, kf, real_auc, self.nperms, self.label_key, self.nfold)
-                    p = 1-((np.sum(real_auc>fake_aucs[0])+1)/(fake_aucs.shape[0]+1))
+                    mse_z, fake_mses = run_perm_test(df, real_mse, self.nperms, self.label_key)
+                    p = 1-((np.sum(real_mse>fake_mses[0])+1)/(fake_mses.shape[0]+1))
 
                     # dict of scores
-                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
+                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_mse':real_mse, 'mse_z':mse_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
                     scorelist.append(scoredict)
 
                     scoredf = pd.DataFrame(scorelist)
@@ -131,64 +129,39 @@ class ridge(object):
         df = pd.read_csv(self.data_file)
         df['class']=1
         cols_to_drop = [f'view{x}' for x in range(1,4)]+['response']
-        cols_to_drop.remove(self.label_key)
-
+        # subtract loc3 viewing from location of interest
+        df[f'{self.label_key}-view3'] = df[self.label_key] - df['view3']
         df.drop(cols_to_drop, axis=1, inplace=True)
         df.reset_index(drop=True, inplace=True)
         return df
 
 
-
-
-def get_data_and_labels(df, label_key, index):
-    ''' uses index to grab data & corresponding class labels '''
-    y = df.loc[index, label_key]
-    X = df.loc[index, :].drop(label_key, axis=1)
-    return X,y
-
-def get_data_and_labels_permuted(df, label_key, index):
-    ''' permutes class labels and then grabs data & corresponding labels '''
-    df[label_key] = np.random.permutation(df[label_key])
-    y = df.loc[index, label_key]
-    X = df.loc[index, :].drop(label_key, axis=1)
-    return X,y
-
-
-def zscore(x):
-    ''' computes z score on value within a series of data '''
-    z = (x - np.mean(x)) / np.std(x)
-    return z
-
-
 def initialize_ridgecv(X_train, y_train):
-    ''' sets up model to run cross-validation ridge regression '''
+    ''' sets up model to run ridge regression cross-validation'''
     alphas = np.array([10,50,100])
     ridgecv = RidgeCV(alphas=alphas, cv=None, scoring ='mean_squared_error')
     ridgecv.fit(X_train, y_train)
     return ridgecv
 
-def run_perm_test(df, real_auc, nperms, label_key, nfolds):
-    ''' creates model using false class labels, finds auc score n times to create null distribution '''
-    fake_aucs = pd.DataFrame()
+def run_perm_test(df, real_mse, nperms, label_key):
+    ''' creates model using false class labels, finds mse score n times to create null distribution '''
+    fake_mses = pd.DataFrame()
     for i in range(0,nperms):
-        all_preds = None
 
-        # data
+        # get permuted data
         X,y = get_data_and_labels_permuted(df, label_key, df.index.get_values())
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
         ridgecv = initialize_ridgecv(X_train, y_train)
 
-        predict_fold = pd.DataFrame(logregcv.predict_proba(X_test))
-        predict_fold['labels'] = y_test.reset_index(drop=True)
-        if all_preds is None:
-            all_preds = predict_fold.copy()
-        else:
-            all_preds = pd.concat([all_preds, predict_fold])
-        fake_aucs.loc[i,0] = roc_auc_score(all_preds['labels'],all_preds[1])
-    plot_null(fake_aucs)
-    auc_z = (real_auc - fake_aucs.mean())/fake_aucs.std()
-    return auc_z, fake_aucs
+        predict_perm = pd.DataFrame(ridgecv.predict(X_test))
+        predict_perm['labels'] = y_test.reset_index(drop=True)
+
+        fake_mses.loc[i,0] = mean_squared_error(predict_perm['labels'],predict_perm[0])
+    mse_z = (real_mse - fake_mses.mean())/fake_mses.std()
+    plot_null(fake_mses)
+
+    return mse_z, fake_mses
 
 def plot_null(fake_aucs):
     print(fake_aucs)
