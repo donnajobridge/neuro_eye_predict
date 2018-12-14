@@ -5,6 +5,7 @@ from sklearn.model_selection import KFold, train_test_split
 from sklearn.linear_model import RidgeCV
 from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
+from location_model_sklearn import normalize_data, downsample_df, gen_wide_df, get_data_and_labels, get_data_and_labels_permuted
 
 class ridge(object):
     """
@@ -31,6 +32,7 @@ class ridge(object):
                  label_key=None,
                  freq_range=None,
                  time_range=None,
+                 dsrate=None,
                  freqs = pd.DataFrame(np.logspace(np.log10(3),np.log10(100),num=50), index=np.arange(1,51), columns=['freqs']),
                  times = pd.DataFrame(np.arange(-750,751,step=2),index=np.arange(1,752), columns=['time']),
                  keep_pow=True,
@@ -44,7 +46,7 @@ class ridge(object):
         # specify features to use
         self.keep_pow=keep_pow
         self.keep_phase=keep_phase
-
+        self.dsrate=dsrate
         if self.keep_pow and self.keep_phase:
             self.features = 'all'
         elif self.keep_pow and not self.keep_phase:
@@ -57,7 +59,7 @@ class ridge(object):
         self.scores=self.data_path+self.sub+'_'+self.cond+'_'+self.label_key+'_'+ self.features+'_scores.csv'
         # parameters for cross-validation
 
-        self.nperms = 500
+        self.nperms = 10
 
         # parameters for sklearn inputs
         self.freqs=freqs
@@ -72,8 +74,10 @@ class ridge(object):
         loops through each frequency & time range for each model_selection
         outer loop performs kfold split; inner loop searches for best C parameter (using kfold splits) and fits it to withheld test data from the outer loop kfold
         '''
-        df_long = self.gen_long()
-        # pred_df = pd.DataFrame()
+        df = self.make_df()
+        df = normalize_data(df, self.keep_pow, self.keep_phase)
+        df = downsample_df(df, self.dsrate)
+
         for f in self.freq_inds:
             for t in self.time_inds:
                 print('beginning time:',t,'beginning freq:',f)
@@ -81,7 +85,7 @@ class ridge(object):
                 scorelist = []
                 cond_df = pd.DataFrame()
 
-                df, elecs, freqs, time, ncol = gen_wide_df(df_long, f, t, self.keep_pow, self.keep_phase)
+                df, elecs, freqs, time, ncol = gen_wide_df(df, f, t)
                 # iterate over folds
 
                 # get data & labels
@@ -90,7 +94,7 @@ class ridge(object):
 
                 ridgecv = initialize_ridgecv(X_train, y_train)
                 # dictionary of values with probabilities from ridgecv
-                probsdict = {'preds':ridgecv.predict(X_test), 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'features':self.features}
+                probsdict = {'preds':ridgecv.predict(X_test), 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'features':self.features, 'dsrate':self.dsrate}
 
                 fold_df = pd.DataFrame(probsdict)
                 cond_df = pd.concat([cond_df, fold_df])
@@ -108,7 +112,7 @@ class ridge(object):
                     p = 1-((np.sum(real_auc>fake_aucs[0])+1)/(fake_aucs.shape[0]+1))
 
                     # dict of scores
-                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms}
+                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
                     scorelist.append(scoredict)
 
                     scoredf = pd.DataFrame(scorelist)
@@ -118,21 +122,14 @@ class ridge(object):
                         scoredf.to_csv(self.scores)
 
 
-    def gen_long(self):
+    def make_df(self):
         """
-        Generates a long format CSV
+        Removes extra data columns & creates df
         :return: df
         """
-
-        # read header on first
-        df = pd.read_csv(self.data_files[0])
-        df['class'] = 0
-
-        for i, file in enumerate(self.data_files[1:]):
-            df_tmp = pd.read_csv(file)
-            df_tmp['class'] = i + 1
-            df = pd.concat([df, df_tmp], axis=0)
-
+        # read in file
+        df = pd.read_csv(self.data_file)
+        df['class']=1
         cols_to_drop = [f'view{x}' for x in range(1,4)]+['response']
         cols_to_drop.remove(self.label_key)
 
@@ -141,38 +138,6 @@ class ridge(object):
         return df
 
 
-def gen_wide_df(df, f_idx, t_idx, keep_pow, keep_phase):
-    """
-
-    :param df:
-    :param f_idx:
-    :param t_idx:
-    :return: df
-    """
-
-    df = df.loc[(df['time'].isin(t_idx)) & (df['freqs'].isin(f_idx))]
-
-    # z-score within block
-    gb = df.groupby(['elecs', 'freqs', 'blockno'])
-    if keep_pow:
-        df['zpow'] = gb['pow'].apply(zscore)
-    if keep_phase:
-        df['sin'] = gb['phase'].apply(np.sin)
-        df['cos'] = gb['phase'].apply(np.cos)
-
-    df.drop(['pow', 'phase'], inplace=True, axis=1)
-
-    df = pd.pivot_table(df,
-                        index=['class', 'blockno', 'events'],
-                        columns=['elecs', 'freqs', 'time'],
-                        aggfunc=[lambda x: x])
-
-    elecs = df.columns.get_level_values('elecs')
-    freqs = df.columns.get_level_values('freqs')
-    time = df.columns.get_level_values('time')
-    ncol = len(elecs)
-    df.reset_index(drop=False, inplace=True)
-    return df, elecs, freqs, time, ncol
 
 
 def get_data_and_labels(df, label_key, index):
@@ -207,22 +172,21 @@ def run_perm_test(df, real_auc, nperms, label_key, nfolds):
     fake_aucs = pd.DataFrame()
     for i in range(0,nperms):
         all_preds = None
-        for train_ind, test_ind in kf.split(df):
 
-            # data for this fold
-            X_train,y_train = get_data_and_labels_permuted(df, label_key, train_ind)
-            X_test,y_test = get_data_and_labels_permuted(df, label_key, test_ind)
+        # data
+        X,y = get_data_and_labels_permuted(df, label_key, df.index.get_values())
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-            logregcv = initialize_logreg(X_train, y_train, nfolds)
+        ridgecv = initialize_ridgecv(X_train, y_train)
 
-            predict_fold = pd.DataFrame(logregcv.predict_proba(X_test))
-            predict_fold['labels'] = y_test.reset_index(drop=True)
-            if all_preds is None:
-                all_preds = predict_fold.copy()
-            else:
-                all_preds = pd.concat([all_preds, predict_fold])
+        predict_fold = pd.DataFrame(logregcv.predict_proba(X_test))
+        predict_fold['labels'] = y_test.reset_index(drop=True)
+        if all_preds is None:
+            all_preds = predict_fold.copy()
+        else:
+            all_preds = pd.concat([all_preds, predict_fold])
         fake_aucs.loc[i,0] = roc_auc_score(all_preds['labels'],all_preds[1])
-        print(f'finishing perm {i}')
+    plot_null(fake_aucs)
     auc_z = (real_auc - fake_aucs.mean())/fake_aucs.std()
     return auc_z, fake_aucs
 

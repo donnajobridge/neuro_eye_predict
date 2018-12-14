@@ -33,6 +33,7 @@ class Decoder(object):
                  label_key='class',
                  freq_range=None,
                  time_range=None,
+                 dsrate=None,
                  freqs = pd.DataFrame(np.logspace(np.log10(3),np.log10(100),num=50), index=np.arange(1,51), columns=['freqs']),
                  times = pd.DataFrame(np.arange(-750,751,step=2),index=np.arange(1,752), columns=['time']),
                  keep_pow=True,
@@ -47,6 +48,7 @@ class Decoder(object):
         # specify features to use
         self.keep_pow=keep_pow
         self.keep_phase=keep_phase
+        self.dsrate = dsrate
 
         if self.keep_pow and self.keep_phase:
             self.features = 'all'
@@ -61,7 +63,7 @@ class Decoder(object):
         # parameters for cross-validation
 
         self.nfold = 5
-        self.nperms = 500
+        self.nperms = 50
 
         # parameters for sklearn inputs
         self.label_key = label_key
@@ -79,6 +81,8 @@ class Decoder(object):
         '''
         kf = KFold(n_splits=self.nfold, shuffle=True)
         df_long = self.gen_long()
+        df = normalize_data(df_long, self.keep_pow, self.keep_phase)
+        df = downsample_df(df, self.dsrate)
         # pred_df = pd.DataFrame()
         for f in self.freq_inds:
             for t in self.time_inds:
@@ -87,7 +91,7 @@ class Decoder(object):
                 scorelist = []
                 cond_df = pd.DataFrame()
 
-                df, elecs, freqs, time, ncol = gen_wide_df(df_long, f, t, self.keep_pow, self.keep_phase)
+                df, elecs, freqs, time, ncol = gen_wide_df(df, f, t)
                 # iterate over folds
                 for train_ind, test_ind in kf.split(df):
 
@@ -97,7 +101,7 @@ class Decoder(object):
 
                     logregcv = initialize_logreg(X_train, y_train, self.nfold)
                     # dictionary of values with probabilities from logregcv
-                    probsdict = {'probs':pd.DataFrame(logregcv.predict_proba(X_test)).loc[:,1], 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs']}
+                    probsdict = {'probs':pd.DataFrame(logregcv.predict_proba(X_test)).loc[:,1], 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'dsrate':self.dsrate}
 
                     fold_df = pd.DataFrame(probsdict)
                     cond_df = pd.concat([cond_df, fold_df])
@@ -115,7 +119,7 @@ class Decoder(object):
                     p = 1-((np.sum(real_auc>fake_aucs[0])+1)/(fake_aucs.shape[0]+1))
 
                     # dict of scores
-                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms}
+                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_auc':real_auc, 'auc_z':auc_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
                     scorelist.append(scoredict)
 
                     scoredf = pd.DataFrame(scorelist)
@@ -127,7 +131,7 @@ class Decoder(object):
 
     def gen_long(self):
         """
-        Generates a long format CSV
+        Generates a long format df
         :return: df
         """
 
@@ -140,23 +144,13 @@ class Decoder(object):
             df_tmp['class'] = i + 1
             df = pd.concat([df, df_tmp], axis=0)
 
-        cols_to_drop = ['response', 'view1', 'view2', 'view3']
+        cols_to_drop = [f'view{x}' for x in range(1,4)]+['response']
         df.drop(cols_to_drop, axis=1, inplace=True)
         df.reset_index(drop=True, inplace=True)
         return df
 
 
-def gen_wide_df(df, f_idx, t_idx, keep_pow, keep_phase):
-    """
-
-    :param df:
-    :param f_idx:
-    :param t_idx:
-    :return: df
-    """
-
-    df = df.loc[(df['time'].isin(t_idx)) & (df['freqs'].isin(f_idx))]
-
+def normalize_data(df, keep_pow, keep_phase):
     # z-score within block
     gb = df.groupby(['elecs', 'freqs', 'blockno'])
     if keep_pow:
@@ -166,6 +160,34 @@ def gen_wide_df(df, f_idx, t_idx, keep_pow, keep_phase):
         df['cos'] = gb['phase'].apply(np.cos)
 
     df.drop(['pow', 'phase'], inplace=True, axis=1)
+    return df
+
+def downsample_df(df, dsrate):
+    df['datetime'] = pd.to_datetime(df['time'])
+    newdf = pd.DataFrame()
+
+    for inds, ldf in df.groupby(by=['events', 'elecs', 'freqs', 'blockno', 'class']):
+        tmp = ldf.iloc[0:df.time.max(),:]
+        tmp = tmp.resample(f'{dsrate}ns', on='datetime').mean()
+        tmp.reset_index(drop=True, inplace=True)
+        newdf = pd.concat([newdf, tmp])
+
+    newdf = newdf.round({'time':0})
+    newdf.reset_index(drop=True, inplace=True)
+
+    return newdf
+
+
+def gen_wide_df(df, dsrate, f_idx, t_idx):
+    """
+
+    :param df:
+    :param f_idx:
+    :param t_idx:
+    :return: df
+    """
+
+    df = df.loc[(df['time'].isin(t_idx)) & (df['freqs'].isin(f_idx))]
 
     df = pd.pivot_table(df,
                         index=['class', 'blockno', 'events'],

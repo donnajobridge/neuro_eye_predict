@@ -11,6 +11,7 @@ for subject in ['ec109']:
                                 data_path='/Users/drdj/neuro_eye_predict/data/',
                                 freq_range = [(3,8), (8,15), (15,25), (25,60), (60,101)],
                                 time_range = [(-750,-500), (-500,-250), (-250,0), (0,250), (250,500), (500,750)],
+                                dsrate = 15,
                                 keep_pow = False,
                                 keep_phase = True)
         decoder.perform_cv()
