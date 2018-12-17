@@ -82,7 +82,7 @@ class Decoder(object):
         kf = KFold(n_splits=self.nfold, shuffle=True)
         df_long = self.gen_long()
         df = normalize_data(df_long, self.keep_pow, self.keep_phase)
-        df = downsample_df(df, self.dsrate)
+        df = downsample_timeseries(df, self.dsrate)
         # pred_df = pd.DataFrame()
         for f in self.freq_inds:
             for t in self.time_inds:
@@ -162,21 +162,16 @@ def normalize_data(df, keep_pow, keep_phase):
     df.drop(['pow', 'phase'], inplace=True, axis=1)
     return df
 
-def downsample_df(df, dsrate):
-    df['datetime'] = pd.to_datetime(df['time'])
-    newdf = pd.DataFrame()
 
-    for inds, ldf in df.groupby(by=['events', 'elecs', 'freqs', 'blockno', 'class']):
-        tmp = ldf.iloc[0:df.time.max(),:]
-        tmp = tmp.resample(f'{dsrate}ns', on='datetime').mean()
-        tmp.reset_index(drop=True, inplace=True)
-        newdf = pd.concat([newdf, tmp])
-
-    newdf = newdf.round({'time':0})
-    newdf.reset_index(drop=True, inplace=True)
-
-    return newdf
-
+def downsample_timeseries(timearray, newsamplerate):
+    ''' downsample timeseries by selecting 1 row every newsamplerate'''
+    
+    alltimes = timearray.time.unique()
+    times_to_keep = alltimes[0:len(alltimes):newsamplerate]
+    downsampled = timearray.set_index('time')
+    downsampled = downsampled.loc[times_to_keep,:]
+    downsampled = downsampled.reset_index()
+    return downsampled
 
 def gen_wide_df(df, f_idx, t_idx):
     """
@@ -202,16 +197,11 @@ def gen_wide_df(df, f_idx, t_idx):
     return df, elecs, freqs, time, ncol
 
 
-def get_data_and_labels(df, label_key, index):
+def get_data_and_labels(df, label_key, index, permute=False):
     ''' uses index to grab data & corresponding class labels '''
-    y = df.loc[index, label_key]
-    X = df.loc[index, :].drop(label_key, axis=1)
+    if permute:
+        df[label_key] = np.random.permutation(df[label_key])
 
-    return X,y
-
-def get_data_and_labels_permuted(df, label_key, index):
-    ''' permutes class labels and then grabs data & corresponding labels '''
-    df[label_key] = np.random.permutation(df[label_key])
     y = df.loc[index, label_key]
     X = df.loc[index, :].drop(label_key, axis=1)
 
@@ -240,8 +230,8 @@ def run_perm_test(df, kf, real_auc, nperms, label_key, nfolds):
         for train_ind, test_ind in kf.split(df):
 
             # data for this fold
-            X_train,y_train = get_data_and_labels_permuted(df, label_key, train_ind)
-            X_test,y_test = get_data_and_labels_permuted(df, label_key, test_ind)
+            X_train,y_train = get_data_and_labels(df, label_key, train_ind, permute=True)
+            X_test,y_test = get_data_and_labels(df, label_key, test_ind, permute=True)
 
             logregcv = initialize_logreg(X_train, y_train, nfolds)
 
