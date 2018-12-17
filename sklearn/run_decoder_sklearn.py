@@ -1,9 +1,9 @@
 
-from location_model_sklearn import Decoder
+from un_location_model_sklearn import Decoder
 
 for subject in ['ec109']:
 # for subject in ['ec105', 'ec106', 'ec107', 'ec108', 'ec109']:
-    cond1 = ['mismatch_old']#, 'mismatch_new']
+    cond1 = ['mismatch_old', 'mismatch_new']
     cond2 = 'match_old'
     cond_list = []
     for c1 in cond1:
@@ -17,9 +17,9 @@ for subject in ['ec109']:
                                 cond1 = cond_pair['cond1'],
                                 cond2 = cond_pair['cond2'],
                                 data_path='/Users/drdj/neuro_eye_predict/data/',
-                                freq_range = [(3,8), (8,15), (15,25), (25,60), (60,101)],
-                                time_range = [(-750,-500), (-500,-250), (-250,0), (0,250), (250,500), (500,750)],
-                                dsrate = 15,
+                                freq_range = [(3,8)],#, (8,15), (15,25), (25,60), (60,101)],
+                                time_range = None,
+                                dsrate = 10,
                                 keep_pow = False,
                                 keep_phase = True)
         decoder.perform_cv()

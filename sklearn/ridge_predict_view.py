@@ -5,7 +5,7 @@ from sklearn.model_selection import KFold, train_test_split
 from sklearn.linear_model import RidgeCV
 from sklearn.metrics import mean_squared_error
 import matplotlib.pyplot as plt
-from location_model_sklearn import normalize_data, downsample_df, gen_wide_df, get_data_and_labels, get_data_and_labels_permuted
+from location_model_sklearn import normalize_data, downsample_timeseries, gen_wide_df, get_data_and_labels
 
 class ridge(object):
     """
@@ -74,8 +74,8 @@ class ridge(object):
         outer loop performs kfold split; inner loop searches for best C parameter (using kfold splits) and fits it to withheld test data from the outer loop kfold
         '''
         df = self.make_df()
-        df = normalize_data(df, self.keep_pow, self.keep_phase)
-        df = downsample_df(df, self.dsrate)
+        df_norm = normalize_data(df, self.keep_pow, self.keep_phase)
+        df_ds = downsample_timeseries(df_norm, self.dsrate)
 
         for f in self.freq_inds:
             for t in self.time_inds:
@@ -84,8 +84,7 @@ class ridge(object):
                 scorelist = []
                 cond_df = pd.DataFrame()
 
-                df, elecs, freqs, time, ncol = gen_wide_df(df, f, t)
-                # iterate over folds
+                df = gen_wide_df(df, f, t)
 
                 # get data & labels
                 X,y = get_data_and_labels(df, self.label_key, df.index.get_values())
@@ -108,16 +107,19 @@ class ridge(object):
                 if permute_flag:
                     mse_z, fake_mses = run_perm_test(df, real_mse, self.nperms, self.label_key)
                     p = 1-((np.sum(real_mse>fake_mses[0])+1)/(fake_mses.shape[0]+1))
+                else:
+                    mse_z=None
+                    p=None
 
-                    # dict of scores
-                    scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_mse':real_mse, 'mse_z':mse_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
-                    scorelist.append(scoredict)
+                # dict of scores
+                scoredict = {'sub':self.sub, 'starttime':self.times.loc[t[0], 'time'], 'endtime':self.times.loc[t[-1], 'time'], 'startfreq':self.freqs.loc[f[0], 'freqs'], 'endfreq':self.freqs.loc[f[-1], 'freqs'], 'real_mse':real_mse, 'mse_z':mse_z, 'pvalue':p, 'nperms':self.nperms, 'dsrate':self.dsrate}
+                scorelist.append(scoredict)
 
-                    scoredf = pd.DataFrame(scorelist)
-                    if os.path.isfile(self.scores):
-                        scoredf.to_csv(self.scores, mode='a', header=False)
-                    else:
-                        scoredf.to_csv(self.scores)
+                scoredf = pd.DataFrame(scorelist)
+                if os.path.isfile(self.scores):
+                    scoredf.to_csv(self.scores, mode='a', header=False)
+                else:
+                    scoredf.to_csv(self.scores)
 
 
     def make_df(self):
@@ -139,7 +141,7 @@ class ridge(object):
 def initialize_ridgecv(X_train, y_train):
     ''' sets up model to run ridge regression cross-validation'''
     alphas = np.array([10,50,100])
-    ridgecv = RidgeCV(alphas=alphas, cv=None, scoring ='mean_squared_error')
+    ridgecv = RidgeCV(alphas=alphas, cv=None, scoring ='neg_mean_squared_error')
     ridgecv.fit(X_train, y_train)
     return ridgecv
 
@@ -149,7 +151,7 @@ def run_perm_test(df, real_mse, nperms, label_key):
     for i in range(0,nperms):
 
         # get permuted data
-        X,y = get_data_and_labels_permuted(df, label_key, df.index.get_values())
+        X,y = get_data_and_labels(df, label_key, df.index.get_values(), permute=True)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
         ridgecv = initialize_ridgecv(X_train, y_train)
@@ -158,7 +160,7 @@ def run_perm_test(df, real_mse, nperms, label_key):
         predict_perm['labels'] = y_test.reset_index(drop=True)
 
         fake_mses.loc[i,0] = mean_squared_error(predict_perm['labels'],predict_perm[0])
-    mse_z = (real_mse - fake_mses.mean())/fake_mses.std()
+    mse_z = ((real_mse - fake_mses.mean())/fake_mses.std()).get_values()
     plot_null(fake_mses)
 
     return mse_z, fake_mses

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import os.path
-from sklearn.model_selection import KFold
+from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
@@ -56,9 +56,9 @@ class Decoder(object):
         elif not self.keep_pow and self.keep_phase:
             self.features= 'phase'
 
-        self.predcv = self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+self.features+'_predictions.csv'
+        self.predcv = self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+self.features+'_predictionsUN.csv'
 
-        self.scores=self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+ self.features+'_scores.csv'
+        self.scores=self.data_path+self.sub+'_'+self.cond1+'_'+self.cond2+'_'+ self.features+'_scoresUN.csv'
         # parameters for cross-validation
 
         self.nfold = 5
@@ -79,12 +79,11 @@ class Decoder(object):
             self.time_inds = [[x] for x in self.times.index.values]
 
 
-    def perform_cv(self, permute_flag=True):
+    def perform_cv(self, permute_flag=False):
         '''perform nested cross validation using LogisticRegressionCV
         loops through each frequency & time range for each model_selection
         outer loop performs kfold split; inner loop searches for best C parameter (using kfold splits) and fits it to withheld test data from the outer loop kfold
         '''
-        kf = KFold(n_splits=self.nfold, shuffle=True)
         df_long = self.gen_long()
         df_norm = normalize_data(df_long, self.keep_pow, self.keep_phase)
         df_ds = downsample_timeseries(df_norm, self.dsrate)
@@ -94,23 +93,19 @@ class Decoder(object):
                 # print('beginning time:',t,'beginning freq:',f)
 
                 scorelist = []
-                cond_df = pd.DataFrame()
 
                 df = gen_wide_df(df_ds, f, t)
-                # iterate over folds
-                for train_ind, test_ind in kf.split(df):
 
-                    # data for this fold
-                    X_train,y_train = get_data_and_labels(df, self.label_key, train_ind)
-                    X_test,y_test = get_data_and_labels(df, self.label_key, test_ind)
+                # data for this fold
+                X,y = get_data_and_labels(df, self.label_key, df.index.get_values())
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-                    logregcv = initialize_logreg(X_train, y_train, self.nfold)
-                    # dictionary of values with probabilities from logregcv
-                    probsdict = {'probs':pd.DataFrame(logregcv.predict_proba(X_test)).loc[:,1], 'labels':y_test.reset_index(drop=True), 'orig_ind':test_ind, 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'dsrate':self.dsrate}
+                logregcv = initialize_logreg(X_train, y_train, self.nfold)
+                # dictionary of values with probabilities from logregcv
+                probsdict = {'probs':pd.DataFrame(logregcv.predict_proba(X_test)).loc[:,1], 'labels':y_test.reset_index(drop=True), 'orig_ind':X_test.index.get_values(), 'start_time':self.times.loc[t[0], 'time'], 'end_time':self.times.loc[t[-1], 'time'], 'start_freq':self.freqs.loc[f[0], 'freqs'], 'end_freq':self.freqs.loc[f[-1],'freqs'], 'dsrate':self.dsrate}
 
-                    fold_df = pd.DataFrame(probsdict)
-                    cond_df = pd.concat([cond_df, fold_df])
-                    # pred_df = pd.concat([pred_df, fold_df])
+                cond_df = pd.DataFrame(probsdict)
+
                 if os.path.isfile(self.predcv):
                     cond_df.to_csv(self.predcv, mode='a', header=False)
                 else:
@@ -120,7 +115,7 @@ class Decoder(object):
 
                 # permute class labels and run model to find a null distribution of auc values
                 if permute_flag:
-                    auc_z, fake_aucs = run_perm_test(df, kf, real_auc, self.nperms, self.label_key, self.nfold)
+                    auc_z, fake_aucs = run_perm_test(df, real_auc, self.nperms, self.label_key, self.nfold)
                     p = 1-((np.sum(real_auc>fake_aucs[0])+1)/(fake_aucs.shape[0]+1))
                 else:
                     auc_z=None
@@ -227,26 +222,21 @@ def initialize_logreg(X_train, y_train, nfolds):
     logregcv.fit(X_train, y_train)
     return logregcv
 
-def run_perm_test(df, kf, real_auc, nperms, label_key, nfolds):
+def run_perm_test(df, real_auc, nperms, label_key, nfolds):
     ''' creates model using false class labels, finds auc score n times to create null distribution '''
     fake_aucs = pd.DataFrame()
     for i in range(0,nperms):
-        all_preds = None
-        for train_ind, test_ind in kf.split(df):
 
-            # data for this fold
-            X_train,y_train = get_data_and_labels(df, label_key, train_ind, permute=True)
-            X_test,y_test = get_data_and_labels(df, label_key, test_ind, permute=True)
+        # data for this fold
+        X,y = get_data_and_labels(df, self.label_key, df.index.get_values(), permute=True)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-            logregcv = initialize_logreg(X_train, y_train, nfolds)
+        logregcv = initialize_logreg(X_train, y_train, nfolds)
 
-            predict_fold = pd.DataFrame(logregcv.predict_proba(X_test))
-            predict_fold['labels'] = y_test.reset_index(drop=True)
-            if all_preds is None:
-                all_preds = predict_fold.copy()
-            else:
-                all_preds = pd.concat([all_preds, predict_fold])
-        fake_aucs.loc[i,0] = roc_auc_score(all_preds['labels'],all_preds[1])
+        predicts = pd.DataFrame(logregcv.predict_proba(X_test))
+        predicts['labels'] = y_test.reset_index(drop=True)
+
+        fake_aucs.loc[i,0] = roc_auc_score(predicts['labels'],predicts[1])
         print(f'finishing perm {i}')
     auc_z = ((real_auc - fake_aucs.mean())/fake_aucs.std()).get_values()
     return auc_z, fake_aucs
